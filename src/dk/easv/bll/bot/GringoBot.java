@@ -17,19 +17,21 @@ public class GringoBot implements IBot {
     private static final int WIN_SCORE = 100000;
     private static final int SIMULATION_DEPTH_LIMIT = 15;
     private static final int DEFENSIVE_PRIORITY = 2000;
+    private static final int MACROBOARD_CONTROL_WEIGHT = 500;
     private static final int[][] POSITION_WEIGHTS = {
-            {5, 1, 5, 1, 8, 1, 5, 1, 5},
-            {1, 3, 1, 3, 8, 3, 1, 3, 1},
-            {5, 1, 5, 1, 8, 1, 5, 1, 5},
-            {1, 3, 1, 3, 8, 3, 1, 3, 1},
-            {8, 8, 8, 8, 10, 8, 8, 8, 8},
-            {1, 3, 1, 3, 8, 3, 1, 3, 1},
-            {5, 1, 5, 1, 8, 1, 5, 1, 5},
-            {1, 3, 1, 3, 8, 3, 1, 3, 1},
-            {5, 1, 5, 1, 8, 1, 5, 1, 5}};
+        {10, 5, 10, 5, 15, 5, 10, 5, 10},
+        {5, 8, 5, 8, 15, 8, 5, 8, 5},
+        {10, 5, 10, 5, 15, 5, 10, 5, 10},
+        {5, 8, 5, 8, 15, 8, 5, 8, 5},
+        {15, 15, 15, 15, 20, 15, 15, 15, 15},
+        {5, 8, 5, 8, 15, 8, 5, 8, 5},
+        {10, 5, 10, 5, 15, 5, 10, 5, 10},
+        {5, 8, 5, 8, 15, 8, 5, 8, 5},
+        {10, 5, 10, 5, 15, 5, 10, 5, 10}
+    };
 
     private static final double EXPLORATION_CONSTANT = 1.414;
-    private static final int BASE_SIMULATION_COUNT = 500;
+    private static final int BASE_SIMULATION_COUNT = 750;
     private String botId;
     private String opponentId;
 
@@ -46,43 +48,51 @@ public class GringoBot implements IBot {
      */
     @Override
     public IMove doMove(IGameState state) {
-        List<IMove> moves = state.getField().getAvailableMoves();
-
-        if (moves.isEmpty()) {
-            return null;
+        // If it's the first move and the macroboard is empty, play the center cell
+        if (state.getMoveNumber() == 0 && isMacroboardEmpty(state.getField())) {
+            return new Move(4, 4);
         }
+
+        List<IMove> moves = state.getField().getAvailableMoves();
 
         if (botId == null && opponentId == null) {
             determinePlayerIds(state);
         }
 
-        // First move strategy - always take center if available
-        if (state.getMoveNumber() == 0) {
-            IMove centerMove = getCenterCell(moves);
-            if (centerMove != null) return centerMove;
+        // Prioritize winning moves
+        IMove immediateWin = findImmediateWinOrBlock(state, botId);
+        if (immediateWin != null) {
+            return immediateWin;
         }
 
-        // Check for immediate winning or blocking opportunities
-        IMove immediateWin = findImmediateWinOrBlock(state, botId);
-        if (immediateWin != null) return immediateWin;
+        // Prioritize blocking opponent's winning moves
         IMove immediateBlock = findImmediateWinOrBlock(state, opponentId);
-        if (immediateBlock != null) return immediateBlock;
+        if (immediateBlock != null) {
+            return immediateBlock;
+        }
+
+        // Prioritize center cells
+        IMove centerMove = getCenterCell(moves);
+        if (centerMove != null) {
+            return centerMove;
+        }
+
+        // Prioritize corner cells
+        IMove cornerMove = getCornerCell(state.getField().getAvailableMoves());
+        if (cornerMove != null) {
+            return cornerMove;
+        }
 
         // Early game strategy
         if (state.getMoveNumber() < 2) {
             // If center is taken, prioritize corners
             if (state.getField().getPlayerId(4, 4).equals(opponentId)) {
-                IMove cornerMove = getCornerCell(state.getField().getAvailableMoves());
-                if (cornerMove != null) return cornerMove;
+                if (cornerMove != null) {
+                    return cornerMove;
+                }
             }
             // Avoid middle edges in early game
             return avoidMiddleEdges(state.getField().getAvailableMoves());
-        }
-
-        // Check for two-in-a-line patterns first
-        IMove patternMove = findPatternMove(state);
-        if (patternMove != null) {
-            return patternMove;
         }
 
         // Then check for other tactical moves
@@ -92,6 +102,18 @@ public class GringoBot implements IBot {
         }
 
         return findBestMove(state);
+    }
+
+    private boolean isMacroboardEmpty(IField field) {
+        String[][] macroboard = field.getMacroboard();
+        for (int i = 0; i < 3; i++) {
+            for (int j = 0; j < 3; j++) {
+                if (!macroboard[i][j].equals(IField.EMPTY_FIELD)) {
+                    return false; // Macroboard is not empty
+                }
+            }
+        }
+        return true; // Macroboard is empty
     }
 
     private void determinePlayerIds(IGameState state) {
@@ -144,7 +166,7 @@ public class GringoBot implements IBot {
         }
 
         // Then try other center positions
-        int[][] centerCoordinates = {{1, 1}, {4, 1}, {7, 1}, {1, 4}, {7, 4}, {1, 7}, {4, 7}, {7, 7}};
+        int[][] centerCoordinates = {{1, 1}, {1, 4}, {1, 7}, {4, 1}, {4, 4}, {4, 7}, {7, 1}, {7, 4}, {7, 7}};
         return getCell(moves, centerCoordinates);
     }
 
@@ -429,11 +451,11 @@ public class GringoBot implements IBot {
         String opponentId = playerId.equals("0") ? "1" : "0";
 
         // Prioritize control of center and corner microboards
-        if (macroboard[1][1].equals(playerId)) score += 500;
+        if (macroboard[1][1].equals(playerId)) score += MACROBOARD_CONTROL_WEIGHT;
         if (macroboard[0][0].equals(playerId) || macroboard[0][2].equals(playerId) ||
-            macroboard[2][0].equals(playerId) || macroboard[2][2].equals(playerId)) {
-            score += 300;
-        }
+                macroboard[2][0].equals(playerId) || macroboard[2][2].equals(playerId)) {
+            score += MACROBOARD_CONTROL_WEIGHT * 0.6;
+        } // Slightly less valuable than center
 
         // Check for wins in microboards
         for (int i = 0; i < 3; i++) {
@@ -444,6 +466,9 @@ public class GringoBot implements IBot {
                 // Add defensive scoring
                 if (needsBlocking(field, i, j, opponentId)) {
                     score += DEFENSIVE_PRIORITY;
+                }
+                if (isAboutToWin(field, i, j, playerId)) {
+                    score += WIN_SCORE * 0.8; // Significant bonus for being close to winning a microboard
                 }
             }
         }
@@ -460,7 +485,34 @@ public class GringoBot implements IBot {
         return score;
     }
 
-    private boolean needsBlocking(IField field, int microX, int microY, String opponentI) {
+    private boolean isAboutToWin(IField field, int microX, int microY, String playerId) {
+        int startX = microX * 3;
+        int startY = microY * 3;
+
+        // Check rows
+        for (int i = 0; i < 3; i++) {
+            if (countLinePieces(field, startX, startY + i, 1, 0, playerId) == 2) return true;
+        }
+
+        // Check columns
+        for (int i = 0; i < 3; i++) {
+            if (countLinePieces(field, startX + i, startY, 0, 1, playerId) == 2) return true;
+        }
+
+        // Check diagonals
+        if (countLinePieces(field, startX, startY, 1, 1, playerId) == 2) return true;
+        if (countLinePieces(field, startX + 2, startY, -1, 1, playerId) == 2) return true;
+
+        return false;
+    }
+
+    private int countLinePieces(IField field, int startX, int startY, int dx, int dy, String playerId) {
+        int count = 0;
+        for (int i = 0; i < 3; i++) if (field.getPlayerId(startX + dx * i, startY + dy * i).equals(playerId)) count++;
+        return count;
+    }
+
+    private boolean needsBlocking(IField field, int microX, int microY, String opponentId) {
         int startX = microX * 3;
         int startY = microY * 3;
         int opponentCount = 0;
@@ -468,7 +520,7 @@ public class GringoBot implements IBot {
         // Check all lines in microboard
         for (int i = 0; i < 3; i++) {
             for (int j = 0; j < 3; j++) {
-                if (field.getPlayerId((startX + j), (startY + i)).equals(opponentI)) {
+                if (field.getPlayerId((startX + j), (startY + i)).equals(opponentId)) {
                     opponentCount++;
                 }
 
@@ -771,7 +823,8 @@ public class GringoBot implements IBot {
         }
 
         // Columns
-        for (int i = 0; i < 3; i++) {
+        for (int i = 0;
+             i < 3; i++) {
             if (!positions[i].equals(IField.EMPTY_FIELD) && positions[i].equals(positions[i + 3]) && positions[i].equals(positions[i + 6])) {
                 return positions[i];
             }
